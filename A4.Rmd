@@ -1,0 +1,197 @@
+---
+title: "Assignment 4"
+author: "Elliot Gavrin"
+date: "2023-01-30"
+output: html_document
+---
+[https://github.com/19eag3/BIOL432_Assignment4](https://github.com/19eag3/BIOL432_Assignment4)
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Part 1 – Explore the data
+
+1. 
+
+```{r}
+MyData <-read.csv("C:/Users/egavr/OneDrive/Documents/BIOL432/Csv files/Cohen_CANCERSEEK_liquid_biopsy_2018_modified.csv")
+library(randomForest)
+library(tree)
+library(dplyr)
+library(gbm)
+```
+
+2.
+
+```{r}
+dim(MyData)
+head(MyData)
+tail(MyData)
+str(MyData)
+summary(MyData)
+```
+
+3.
+
+There are missing data is columns "AFP", "Angiopoietin_2", "AXL", "CA_125", "CA_15_3", "CA19_9", "CD44". We can predict missing data with rfImpute(). It is not necessary to normalize the data for a Random Forest model because the model subsamples features and combines them. In other model types, you would need to normalize data to compare many features for a single model. 
+
+```{r}
+#Identify if any columns have missing values
+impFeatures <-names(
+  MyData[,colSums(is.na(MyData))>0]
+)
+print(impFeatures) 
+colSums(is.na(MyData)) #There are not a lot of missing values per column. Therefore we can add our own data with rfImpute()
+dim(MyData)
+
+impFeatures<-c("AFP", "Angiopoietin_2", "AXL", "CA_125", "CA_15_3", "CA19_9", "CD44")
+Imputed <-rfImpute(x=MyData[,impFeatures],
+                   y=as.factor(MyData$Tumor_type))
+head(Imputed)
+dim(Imputed)
+
+FullData <-MyData
+FullData[,impFeatures]<-Imputed[,impFeatures]
+colSums(is.na(FullData)) #each column sum = 0
+```
+
+4.
+
+There are 800 normal samples and 1004 tumor samples.
+
+```{r}
+dim(FullData)
+table(FullData$Tumor_type)
+```
+
+5.
+
+```{r}
+Train <-c(1:nrow(FullData)) %% 2
+Validate <-1-Train
+```
+
+Part 2 – Decision tree
+
+1.
+
+```{r}
+FullData <-FullData %>%
+  select(-c("Patient_ID", "Sample_ID"))
+FullData <-FullData %>%
+  mutate(Tumor_type=as.factor(Tumor_type))
+TumorTree <-tree::tree(Tumor_type ~ ., data=FullData)
+plot(TumorTree); text(TumorTree, cex=0.5, adj=0)
+```
+
+
+2.
+
+IL_8 was the protein feature most influential for classifying samples, as it is the root of the tree. Its longer branches indicate that it had the post predictions that classify more of the observations. 
+
+3.
+
+```{r}
+CatDat <-data.frame(Obs=FullData$Tumor_type,Pred=predict(TumorTree, FullData, type="class"))
+table(CatDat)
+head(CatDat)
+```
+
+4.
+
+The misclassification error rate is is 0.359
+
+```{r}
+summary(TumorTree)
+MisClass <-CatDat %>%
+  filter(Obs!=Pred)
+nrow(MisClass)/nrow(CatDat)
+```
+
+
+5. What cancer types did your tree accurately predict? Which types did it struggle with?
+The decision tree was very good at predicting the colorectum, breast, normal, and pancreas. They had high correlation between the observed datasheet and the predictions. The tree struggled predicting ovary cancer. It was incorrect more often than it was correct. It mispredicted it most often as colorectum cancer. 
+
+Part 3 – Random Forest
+
+1.
+
+The use of random forests did improve the model's classification. The error rate decreased to 23.73% from 35.9%. 
+
+```{r}
+#Random Forest
+TumorForest <-randomForest(Tumor_type ~ ., data=FullData, ntree=100, mtry=3,nodesize=5,importance=TRUE)
+ForrestPred <-data.frame(Obs=FullData$Tumor_type,Pred=predict(TumorTree, FullData, type="class"))
+table(ForrestPred)
+print(TumorForest)
+
+
+```
+
+2. 
+
+The most influential protein feature to classify the tumors is sFas
+
+```{r}
+TumorForest$importance
+ForrestBoost<-gbm(Tumor_type ~ ., data=FullData,
+                  distribution="gaussian",
+                  n.trees=25, interaction.depth=2, cv.folds=12)
+
+print(ForrestBoost)
+summary(ForrestBoost)
+```
+
+Lastly, create a new table where your dependent variable is cancer or normal. Combine all tumor types into ‘cancer’ and keep non-cancer samples as ‘normal’ in a column called ‘binary’. Again, make sure this is a factor and split this into training and test sets. Run another random forest model but this time use the ‘binary’ column as the response variable. Remember to include the importance = T flag. 
+
+```{r}
+binary<-NA
+binary[FullData$Tumor_type=="Normal"]<-"normal"
+binary[FullData$Tumor_type!="Normal"]<-"cancer"
+CNDat <-cbind(FullData, binary)
+
+CNDat <-CNDat %>%
+  mutate(binary=as.factor(binary))
+
+CNTrain <-c(1:nrow(CNDat)) %% 2
+CNValidate <-1-Train
+
+CNForest <-randomForest(binary ~ ., data=CNDat, ntree=100, mtry=3,nodesize=5,importance=TRUE)
+CNPred <-data.frame(Obs=CNDat$binary,Pred=predict(TumorTree, CNDat, type="class"))
+table(ForrestPred)
+```
+
+1. 
+
+The misclassification error rate is 0.11%
+
+```{r}
+print(CNForest)
+```
+
+
+2. 
+```{r}
+CNForest$importance
+BinaryBoost<-gbm(binary ~ ., data=CNDat,
+                  distribution="gaussian",
+                  n.trees=25, interaction.depth=2, cv.folds=12)
+
+print(BinaryBoost)
+summary(BinaryBoost)
+```
+
+
+3.
+
+AFP and HE4 were the most influential for classifying between samples with and without cancer.
+
+4.
+
+These proteins are influential for classifying tumor and normal blood biopsies because they have identifiable structures that can be seen in spectroscopy. They also have unique shapes that can interact with metabolic pathways and influence pacemaker enzymes in the cell. 
+
+5. 
+
+Random Forest models are useful for detecting cancer in blood samples as they are able to categorize proteins by their relative influence. This allows researchers to shift their focus to investigate proteins with the influence and prevalence in the datasheet towards cancer. Additionally, it is useful information to discover what proteins are essential for a healthy, normal cell.
